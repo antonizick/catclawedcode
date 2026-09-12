@@ -1,6 +1,9 @@
 # Local, machine-specific config (contains your actual device name/combo)
 config.yaml
 
+# Personal scratch notes, not part of the project
+notes/
+
 # Python
 __pycache__/
 *.pyc
