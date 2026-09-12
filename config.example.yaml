@@ -1,0 +1,27 @@
+# Copy this file to config.yaml (next to catlock.py, or anywhere and pass
+# --config /path/to/it) and adjust for your hardware.
+
+# Substring match (case-insensitive) against the device name reported by
+# `python3 catlock.py --list-devices` or `cat /proc/bus/input/devices`.
+# A common internal-laptop-keyboard name on many machines is:
+device_name: "AT Translated Set 2 keyboard"
+
+# Keys that must be held together to lock, and again to unlock. Names
+# must match evdev.ecodes constants (KEY_* - see
+# https://python-evdev.readthedocs.io/en/latest/apidoc.html#evdev.ecodes).
+# Defaults to the same combo for both, i.e. a toggle.
+lock_keys: [KEY_LEFTCTRL, KEY_LEFTALT, KEY_L]
+unlock_keys: [KEY_LEFTCTRL, KEY_LEFTALT, KEY_L]
+
+# How long (seconds) the combo must be held before it triggers. Keep this
+# high enough that a cat's paw resting on the right keys for a moment
+# can't fluke it. 1.5-2.5s is a reasonable range.
+hold_seconds: 1.5
+
+# Fire a desktop notification (via notify-send, if installed) on every
+# lock/unlock. Harmless if notify-send is missing.
+notify: true
+
+# Optional log file path, in addition to stdout/stderr (which systemd
+# already captures into the journal). Leave null to skip.
+log_file: null

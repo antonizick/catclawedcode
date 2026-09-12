@@ -1,0 +1,19 @@
+# Local, machine-specific config (contains your actual device name/combo)
+config.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Logs, if you point log_file at something inside the repo
+*.log
+
+# Editor/OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store

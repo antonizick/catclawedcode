@@ -1,0 +1,17 @@
+[Unit]
+Description=catlock - cat-proof keyboard lock
+After=graphical-session.target
+# Belt-and-suspenders: if catlock dies repeatedly, stop trying rather than
+# spin forever with the keyboard in an unknown state.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# install.sh rewrites the two paths below to your actual install location.
+ExecStart=/usr/bin/python3 __INSTALL_DIR__/catlock.py --config __INSTALL_DIR__/config.yaml
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

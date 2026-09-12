@@ -1,0 +1,8 @@
+# Grants members of the "input" group read/write access to the uinput
+# device node, so catlock can create its virtual keyboard without running
+# as root. Install to /etc/udev/rules.d/99-catlock-uinput.rules and run:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# You also need to be a member of the "input" group (for read access to
+# /dev/input/eventX): sudo usermod -aG input "$USER", then log out/in.
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
