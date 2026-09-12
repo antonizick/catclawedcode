@@ -22,6 +22,15 @@ hold_seconds: 1.5
 # lock/unlock. Harmless if notify-send is missing.
 notify: true
 
+# Play a sound on every lock/unlock (a meow, by default).
+sound: true
+
+# Path to the sound file to play. Relative paths are resolved relative
+# to this repo's directory, so the bundled placeholder works out of the
+# box. Point this at your own recording (wav/ogg/mp3 - whatever your
+# system player supports) to replace the synthesized default.
+sound_file: "sounds/meow.wav"
+
 # Optional log file path, in addition to stdout/stderr (which systemd
 # already captures into the journal). Leave null to skip.
 log_file: null

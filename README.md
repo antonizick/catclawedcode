@@ -81,6 +81,9 @@ Read this before relying on CatLock to protect real work:
 - Python 3.9+
 - Python packages: `evdev`, `PyYAML` (see `requirements.txt`)
 - `notify-send` (optional, for lock/unlock desktop notifications)
+- One of `pw-play`, `paplay`, `aplay`, or `ffplay` (optional, for the
+  lock/unlock sound - Omarchy ships PipeWire, so `pw-play` is already
+  present)
 
 ## Installation
 
@@ -157,7 +160,23 @@ Copy `config.example.yaml` to `config.yaml` and edit:
 | `unlock_keys`  | Same, to unlock (defaults to the same combo as `lock_keys`)        |
 | `hold_seconds` | How long the combo must be held before it triggers                 |
 | `notify`       | Send a desktop notification via `notify-send` on lock/unlock       |
+| `sound`        | Play a sound (a meow, by default) on every lock/unlock             |
+| `sound_file`   | Path to the sound file; relative paths resolve against this repo   |
 | `log_file`     | Optional extra log file path, besides stdout                       |
+
+### Sound
+
+`sounds/meow.wav` is a small placeholder cat-meow synthesized locally in
+Python (`sounds/generate_meow.py` - pitch sweep + light vibrato, no
+external assets, no internet, no licensing questions). It's a stylized
+chirp, not a real recording. Swap it for a real meow (or any sound)
+anytime by pointing `sound_file` in `config.yaml` at your own file - no
+code changes needed. To regenerate/tweak the placeholder itself, edit
+and re-run `sounds/generate_meow.py`.
+
+Playback tries, in order: `pw-play`, `paplay`, `aplay`, `ffplay` -
+whichever is first found on `PATH`. It's fire-and-forget (non-blocking),
+so a slow or missing player never delays the actual lock/unlock.
 
 Find your keyboard's device name with:
 

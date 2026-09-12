@@ -35,14 +35,26 @@ try:
 except ImportError:
     yaml = None
 
+REPO_DIR = Path(__file__).resolve().parent
+
 DEFAULT_CONFIG = {
     "device_name": "AT Translated Set 2 keyboard",
     "lock_keys": ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_L"],
     "unlock_keys": ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_L"],
     "hold_seconds": 1.5,
     "notify": True,
+    "sound": True,
+    "sound_file": "sounds/meow.wav",
     "log_file": None,
 }
+
+# Tried in this order; the first one found on PATH is used for the whole run.
+SOUND_PLAYERS = [
+    ["pw-play"],
+    ["paplay"],
+    ["aplay", "-q"],
+    ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+]
 
 log = logging.getLogger("catlock")
 
@@ -113,6 +125,38 @@ def notify(summary: str, body: str) -> None:
         log.debug("notify-send failed (non-fatal): %s", exc)
 
 
+def find_sound_player() -> Optional[list[str]]:
+    import shutil
+
+    for cmd in SOUND_PLAYERS:
+        if shutil.which(cmd[0]) is not None:
+            return cmd
+    return None
+
+
+def resolve_sound_path(sound_file: str) -> Path:
+    p = Path(sound_file)
+    return p if p.is_absolute() else (REPO_DIR / p)
+
+
+def play_sound(player_cmd: list[str], sound_path: Path) -> None:
+    import subprocess
+
+    if not sound_path.exists():
+        log.warning("sound file %s not found, skipping playback", sound_path)
+        return
+    try:
+        # Fire-and-forget: never let audio playback block or delay the
+        # lock/unlock toggle itself.
+        subprocess.Popen(
+            [*player_cmd, str(sound_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:  # sound is best-effort, never fatal
+        log.debug("sound playback failed (non-fatal): %s", exc)
+
+
 class CatLock:
     def __init__(
         self,
@@ -121,12 +165,16 @@ class CatLock:
         unlock_keys: set[int],
         hold_seconds: float,
         do_notify: bool,
+        sound_player: Optional[list[str]] = None,
+        sound_path: Optional[Path] = None,
     ):
         self.device = device
         self.lock_keys = lock_keys
         self.unlock_keys = unlock_keys
         self.hold_seconds = hold_seconds
         self.do_notify = do_notify
+        self.sound_player = sound_player
+        self.sound_path = sound_path
 
         self.pressed: set[int] = set()
         self.locked = False
@@ -220,6 +268,9 @@ class CatLock:
         if self.do_notify:
             notify("catlock", f"Keyboard {state.lower()}")
 
+        if self.sound_player and self.sound_path:
+            play_sound(self.sound_player, self.sound_path)
+
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
@@ -262,12 +313,30 @@ def main() -> None:
     lock_keys = resolve_keys(cfg["lock_keys"])
     unlock_keys = resolve_keys(cfg["unlock_keys"])
 
+    sound_player = None
+    sound_path = None
+    if cfg.get("sound"):
+        sound_player = find_sound_player()
+        sound_path = resolve_sound_path(cfg["sound_file"])
+        if sound_player is None:
+            log.warning(
+                "sound is enabled but no player found (tried: %s); "
+                "install one of pipewire, pulseaudio-utils, alsa-utils, or ffmpeg",
+                ", ".join(cmd[0] for cmd in SOUND_PLAYERS),
+            )
+        elif not sound_path.exists():
+            log.warning("sound is enabled but sound_file %s does not exist", sound_path)
+        else:
+            log.info("sound enabled via '%s', file=%s", sound_player[0], sound_path)
+
     catlock = CatLock(
         device=device,
         lock_keys=lock_keys,
         unlock_keys=unlock_keys,
         hold_seconds=float(cfg["hold_seconds"]),
         do_notify=bool(cfg["notify"]),
+        sound_player=sound_player,
+        sound_path=sound_path,
     )
 
     def _handle_signal(signum, _frame):
