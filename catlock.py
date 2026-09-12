@@ -209,8 +209,20 @@ class CatLock:
             self.hold_seconds,
         )
         try:
-            for event in self.device.read_loop():
-                self._handle(event)
+            # A plain `for event in device.read_loop()` only re-evaluates
+            # anything when a new event arrives - if you hold the combo
+            # perfectly still, no further key events fire and the "held
+            # long enough" check never gets a chance to re-run. Polling
+            # with a short timeout lets us check elapsed hold time on a
+            # steady cadence regardless of whether new events show up.
+            import select
+
+            while True:
+                ready, _, _ = select.select([self.device.fd], [], [], 0.1)
+                if self.device.fd in ready:
+                    for event in self.device.read():
+                        self._handle_event(event)
+                self._check_combo_timeout()
         finally:
             self.close()
 
@@ -221,7 +233,7 @@ class CatLock:
             self.ui.write(ecodes.EV_KEY, code, 0)
         self.ui.syn()
 
-    def _handle(self, event) -> None:
+    def _handle_event(self, event) -> None:
         if event.type == ecodes.EV_KEY and event.value in (0, 1):
             if event.value == 1:
                 self.pressed.add(event.code)
@@ -232,9 +244,6 @@ class CatLock:
             if target and target.issubset(self.pressed):
                 if self.combo_since is None:
                     self.combo_since = time.monotonic()
-                elif time.monotonic() - self.combo_since >= self.hold_seconds:
-                    self._toggle()
-                    self.combo_since = None
             else:
                 self.combo_since = None
 
@@ -247,6 +256,13 @@ class CatLock:
             return
 
         self.ui.write_event(event)
+
+    def _check_combo_timeout(self) -> None:
+        if self.combo_since is None:
+            return
+        if time.monotonic() - self.combo_since >= self.hold_seconds:
+            self._toggle()
+            self.combo_since = None
 
     def _toggle(self) -> None:
         self.locked = not self.locked
