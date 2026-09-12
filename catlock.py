@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import select
 import signal
 import sys
 import time
@@ -38,6 +39,7 @@ except ImportError:
 REPO_DIR = Path(__file__).resolve().parent
 
 DEFAULT_CONFIG = {
+    "device_path": None,
     "device_name": "AT Translated Set 2 keyboard",
     "lock_keys": ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_L"],
     "unlock_keys": ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_L"],
@@ -84,6 +86,18 @@ def resolve_keys(names: list[str]) -> set[int]:
     return codes
 
 
+def find_device_by_path(device_path: str) -> Optional[evdev.InputDevice]:
+    # Resolves /dev/input/by-id/... or /dev/input/by-path/... symlinks to
+    # the current eventN node. Use this when device_name is ambiguous -
+    # e.g. some keyboards (composite USB HID devices especially) expose
+    # several /dev/input/eventN nodes sharing the exact same name, only
+    # one of which actually carries real keystrokes.
+    resolved = Path(device_path).resolve()
+    if not resolved.exists():
+        return None
+    return evdev.InputDevice(str(resolved))
+
+
 def find_device(name_substring: str) -> Optional[evdev.InputDevice]:
     needle = name_substring.lower()
     for path in evdev.list_devices():
@@ -107,6 +121,87 @@ def list_devices() -> None:
     for path in paths:
         dev = evdev.InputDevice(path)
         print(f"{dev.path:<20} {dev.name:<40} {dev.phys}")
+    names = [evdev.InputDevice(p).name for p in paths]
+    if len(names) != len(set(names)):
+        print(
+            "\nNote: some names above are duplicated - this happens with "
+            "composite USB keyboards (e.g. gaming keyboards) that expose "
+            "several /dev/input/eventN nodes under the same name, only one "
+            "of which usually carries real keystrokes. device_name matching "
+            "can't disambiguate those; run 'catlock.py --identify' instead "
+            "to find out exactly which node your keystrokes come through."
+        )
+
+
+def find_by_id_symlink(event_path: str) -> Optional[str]:
+    by_id_dir = Path("/dev/input/by-id")
+    if not by_id_dir.is_dir():
+        return None
+    target = Path(event_path).resolve()
+    for link in by_id_dir.iterdir():
+        try:
+            if link.resolve() == target:
+                return str(link)
+        except OSError:
+            continue
+    return None
+
+
+def identify_devices(duration: float) -> None:
+    paths = evdev.list_devices()
+    if not paths:
+        print(
+            "No accessible input devices found. See the README's "
+            "'Permissions' section, or run install.sh."
+        )
+        return
+    devices = [evdev.InputDevice(p) for p in paths]
+    # If catlock is already running against some other device, exclude its
+    # own virtual output - it'll otherwise show up as "seeing" whatever you
+    # type, which is a red herring, not the real physical device.
+    devices = [d for d in devices if d.name != "catlock-virtual-kbd"]
+    by_fd = {d.fd: d for d in devices}
+
+    print(f"Watching {len(devices)} input devices for {duration:.0f}s.")
+    print("Type on the keyboard you want catlock to grab, right now.")
+    print("(Ctrl+C here stops early once you've typed enough.)\n")
+
+    seen: dict[str, evdev.InputDevice] = {}
+    deadline = time.monotonic() + duration
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select(list(by_fd), [], [], 0.5)
+            for fd in ready:
+                dev = by_fd[fd]
+                try:
+                    for event in dev.read():
+                        if event.type == ecodes.EV_KEY:
+                            seen[dev.path] = dev
+                except (OSError, BlockingIOError):
+                    pass
+    except KeyboardInterrupt:
+        pass
+
+    if not seen:
+        print("No key activity seen on any device - did you type during the window?")
+        return
+
+    print("Device(s) that saw key activity:")
+    for path, dev in seen.items():
+        print(f"\n  {path}")
+        print(f"    name: {dev.name!r}")
+        print(f"    phys: {dev.phys}")
+        by_id = find_by_id_symlink(path)
+        if by_id:
+            print(f"    stable by-id path: {by_id}")
+            print(f'    -> config.yaml: device_path: "{by_id}"')
+        else:
+            print(
+                f'    -> config.yaml: device_name: "{dev.name}"  '
+                "(no by-id symlink found - double check --list-devices "
+                "doesn't show this name more than once before relying on "
+                "name matching)"
+            )
 
 
 def notify(summary: str, body: str) -> None:
@@ -215,8 +310,6 @@ class CatLock:
             # long enough" check never gets a chance to re-run. Polling
             # with a short timeout lets us check elapsed hold time on a
             # steady cadence regardless of whether new events show up.
-            import select
-
             while True:
                 ready, _, _ = select.select([self.device.fd], [], [], 0.1)
                 if self.device.fd in ready:
@@ -240,10 +333,20 @@ class CatLock:
             else:
                 self.pressed.discard(event.code)
 
+            log.debug(
+                "key %s %s -> pressed=%s",
+                ecodes.KEY.get(event.code, event.code),
+                "down" if event.value == 1 else "up",
+                sorted(ecodes.KEY.get(c, c) for c in self.pressed),
+            )
+
             target = self.unlock_keys if self.locked else self.lock_keys
             if target and target.issubset(self.pressed):
                 if self.combo_since is None:
                     self.combo_since = time.monotonic()
+                    # hold_seconds=0 means fire immediately on press rather
+                    # than waiting for the next timer poll.
+                    self._check_combo_timeout()
             else:
                 self.combo_since = None
 
@@ -292,6 +395,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=Path, default=None, help="path to config.yaml")
     p.add_argument("--list-devices", action="store_true", help="list input devices and exit")
+    p.add_argument(
+        "--identify",
+        action="store_true",
+        help="watch all input devices and report which one you type on, then exit",
+    )
+    p.add_argument(
+        "--identify-seconds",
+        type=float,
+        default=10.0,
+        help="how long --identify watches for (default: 10s)",
+    )
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     return p
 
@@ -301,6 +415,10 @@ def main() -> None:
 
     if args.list_devices:
         list_devices()
+        return
+
+    if args.identify:
+        identify_devices(args.identify_seconds)
         return
 
     cfg = load_config(args.config)
@@ -316,15 +434,25 @@ def main() -> None:
 
     log.info("starting catlock with config: %s", {k: v for k, v in cfg.items()})
 
-    device = find_device(cfg["device_name"])
-    if device is None:
-        log.error(
-            "no input device matched name substring '%s'. Run "
-            "'python3 catlock.py --list-devices' to see available devices "
-            "and update device_name in your config.",
-            cfg["device_name"],
-        )
-        sys.exit(1)
+    if cfg.get("device_path"):
+        device = find_device_by_path(cfg["device_path"])
+        if device is None:
+            log.error(
+                "device_path '%s' does not resolve to an existing device. "
+                "Check the symlink still exists under /dev/input/by-id/.",
+                cfg["device_path"],
+            )
+            sys.exit(1)
+    else:
+        device = find_device(cfg["device_name"])
+        if device is None:
+            log.error(
+                "no input device matched name substring '%s'. Run "
+                "'python3 catlock.py --list-devices' to see available devices "
+                "and update device_name (or set device_path) in your config.",
+                cfg["device_name"],
+            )
+            sys.exit(1)
 
     lock_keys = resolve_keys(cfg["lock_keys"])
     unlock_keys = resolve_keys(cfg["unlock_keys"])

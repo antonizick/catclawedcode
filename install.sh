@@ -43,8 +43,9 @@ echo "== Step 2: config.yaml =="
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
     cp "$INSTALL_DIR/config.example.yaml" "$INSTALL_DIR/config.yaml"
     echo "Created config.yaml from config.example.yaml."
-    echo "Run: python3 $INSTALL_DIR/catlock.py --list-devices"
-    echo "...then edit device_name in config.yaml to match your internal keyboard."
+    echo "Run: python3 $INSTALL_DIR/catlock.py --identify"
+    echo "...type on your target keyboard when it says to, then paste the"
+    echo "device_path (or device_name) it prints into config.yaml."
 else
     echo "config.yaml already exists, leaving it alone."
 fi

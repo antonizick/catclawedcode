@@ -18,9 +18,13 @@ While **unlocked**, every keystroke is forwarded through immediately -
 you shouldn't notice CatLock is running at all.
 
 When you hold the configured key combo for a set duration (default:
-1.5s), CatLock stops forwarding events from that device. Cat walks,
-sits, or naps on the keyboard: nothing gets through. Holding the same
-combo again for the same duration resumes forwarding.
+1.5s; set `hold_seconds: 0` to fire the instant all keys are down, no
+hold required), CatLock stops forwarding events from that device. Cat
+walks, sits, or naps on the keyboard: nothing gets through. Holding the
+same combo again for the same duration resumes forwarding. The hold
+timer is checked on a steady poll independent of new key events, so it
+still fires correctly even if you hold the combo perfectly still with no
+other keys changing state in between.
 
 Because the grab happens *before* your compositor ever sees the raw
 device, the hotkey has to be recognized by CatLock itself - it cannot be
@@ -64,12 +68,14 @@ Read this before relying on CatLock to protect real work:
   `pkill -f catlock.py` to get your keyboard back. (Your mouse/trackpad
   alone won't get you out of a stuck lock - you need another keyboard or
   a remote shell.)
-- **Match `device_name` carefully.** It's a case-insensitive substring
-  match against the device name reported by
-  `python3 catlock.py --list-devices`. Make sure it matches only your
-  intended internal keyboard, especially on a machine anyone else might
-  use, or where you might plug in an external keyboard you'd forget is
-  also being grabbed.
+- **Identify your device carefully.** Use `python3 catlock.py --identify`
+  (see "Finding the right device" below) rather than guessing a
+  `device_name` substring - some keyboards expose multiple identically-
+  named `/dev/input/eventN` nodes where only one is real, and a
+  substring match can silently grab the wrong one. Also make sure
+  whatever you target is only your intended keyboard, especially on a
+  machine anyone else might use, or where you might plug in an external
+  keyboard you'd forget is also being grabbed.
 - Locking only affects the one device CatLock grabs. It has no effect on
   screen lock, power button, or anything else - by design, so the screen
   stays alive and you can keep watching whatever's running.
@@ -120,9 +126,9 @@ sudo pacman -S python-evdev python-yaml
 
 cp config.example.yaml config.yaml
 
-# find your keyboard's device name
-python3 catlock.py --list-devices
-# edit config.yaml: set device_name to match
+# identify your keyboard (see "Finding the right device" below) and set
+# device_path (preferred) or device_name in config.yaml accordingly
+python3 catlock.py --identify
 
 # uinput permissions, so you don't need root
 sudo cp udev/99-catlock-uinput.rules /etc/udev/rules.d/
@@ -155,7 +161,8 @@ Copy `config.example.yaml` to `config.yaml` and edit:
 
 | Key            | Meaning                                                            |
 |----------------|---------------------------------------------------------------------|
-| `device_name`  | Case-insensitive substring match against the keyboard's evdev name |
+| `device_path`  | Stable `/dev/input/by-id/...` symlink to grab (preferred - see below) |
+| `device_name`  | Case-insensitive substring match against the keyboard's evdev name; only used if `device_path` is unset |
 | `lock_keys`    | List of `evdev.ecodes` `KEY_*` names, all held together, to lock   |
 | `unlock_keys`  | Same, to unlock (defaults to the same combo as `lock_keys`)        |
 | `hold_seconds` | How long the combo must be held before it triggers                 |
@@ -178,11 +185,37 @@ Playback tries, in order: `pw-play`, `paplay`, `aplay`, `ffplay` -
 whichever is first found on `PATH`. It's fire-and-forget (non-blocking),
 so a slow or missing player never delays the actual lock/unlock.
 
-Find your keyboard's device name with:
+### Finding the right device
 
 ```sh
-python3 catlock.py --list-devices
+python3 catlock.py --identify
 ```
+
+Type on the keyboard you want CatLock to grab when it says to. It
+watches every input device at once, reports which one(s) actually saw
+your keystrokes, and prints the exact `device_path` (or `device_name` as
+a fallback) to paste into `config.yaml`.
+
+Use `--identify` instead of guessing from `--list-devices` alone,
+especially on gaming/RGB keyboards: **some keyboards - including some
+laptops' own built-in keyboards - expose several `/dev/input/eventN`
+nodes under the exact same device name**, where only one actually
+carries real keystrokes and the others are silent secondary HID report
+interfaces (extra media keys, macro layers, etc). Matching by
+`device_name` alone can't tell these apart and may silently grab a node
+that never receives anything - CatLock would run, report success, and
+simply never see your keypresses. `--list-devices` flags this case when
+it detects duplicate names, but `--identify` is what actually resolves
+it, by watching for which node lights up when you type. This is also
+why "AT Translated Set 2 keyboard" (the classic PS/2-style name) isn't
+a safe universal default - some laptops (particularly gaming laptops)
+route their built-in keyboard through a USB HID controller instead,
+under a completely different, sometimes-duplicated name.
+
+`--identify` prefers a `/dev/input/by-id/...` symlink when one exists,
+since those are stable across reboots (unlike raw `/dev/input/eventN`
+numbers, which can shift). Set `device_path` to that value in
+`config.yaml` and it takes priority over `device_name` automatically.
 
 ## Running
 
@@ -228,8 +261,29 @@ file if that's useful to you.
 
 ## Troubleshooting
 
-- **`--list-devices` doesn't show my keyboard** - make sure you're in
-  the `input` group (`id -nG`) and have logged out/in since being added.
+- **`--list-devices`/`--identify` show nothing at all** - make sure
+  you're in the `input` group (`id -nG`) and have **logged out and back
+  in (or rebooted)** since being added. Group membership is fixed at
+  login time - `usermod -aG` doesn't affect an already-running session,
+  including an already-running `systemd --user` instance, so the service
+  can keep failing even after `install.sh` succeeds until you do this.
+- **Service fails immediately with `no input device matched name
+  substring '...'`** - `device_name` doesn't match anything accessible.
+  Run `python3 catlock.py --identify` and use the value it prints. If
+  the service crash-loops on this and systemd reports
+  `start-limit-hit`, fix the config first, then clear the lockout:
+  `systemctl --user reset-failed catlock.service` before restarting.
+- **Service starts fine, grabs a device, but the combo never does
+  anything** - almost always means it grabbed the *wrong* device node.
+  This happens on keyboards (including some laptops' own built-in ones)
+  that expose several identically-named `/dev/input/eventN` nodes where
+  only one carries real keystrokes - `device_name` substring matching
+  can't tell them apart. Run `python3 catlock.py --identify`, type on
+  your actual keyboard when prompted, and use the `device_path` it
+  prints (takes priority over `device_name` automatically). Run with
+  `-v` and watch `journalctl --user -u catlock.service -f` while you
+  type - if you see zero `key ... down/up` debug lines while typing
+  normally, that's the confirming symptom.
 - **`PermissionError` on startup** - see the "Permissions" section
   above; you likely need the udev rule and/or `input` group membership.
 - **Keyboard seems stuck locked** - from another device or SSH session,
@@ -237,6 +291,9 @@ file if that's useful to you.
   If it was killed with `SIGKILL` (`-9`) instead of a normal signal, the
   grab may need `sudo fuser -k /dev/input/eventX` or a reboot as a last
   resort - this is why testing thoroughly before relying on it matters.
+  Since lock state is never persisted to disk, restarting the service
+  (or rebooting) always comes back unlocked - it can never boot up
+  already stuck locked.
 - **Modifier keys seem stuck after toggling** - please open an issue
   with your config and the `-v` log output around the toggle; this is
   exactly the class of bug the "release all keys on lock" / "wait for

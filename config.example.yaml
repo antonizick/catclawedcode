@@ -1,9 +1,22 @@
 # Copy this file to config.yaml (next to catlock.py, or anywhere and pass
 # --config /path/to/it) and adjust for your hardware.
 
-# Substring match (case-insensitive) against the device name reported by
-# `python3 catlock.py --list-devices` or `cat /proc/bus/input/devices`.
-# A common internal-laptop-keyboard name on many machines is:
+# Preferred: an exact, stable device identifier. Run:
+#   python3 catlock.py --identify
+# and type on your target keyboard when it says to - it prints the right
+# value to paste here. This is the ONLY reliable option on keyboards that
+# expose multiple /dev/input/eventN nodes under the identical name (common
+# on composite USB "gaming keyboard" style controllers, including some
+# laptops' own built-in keyboards) - device_name below can't tell those
+# apart and may silently grab the wrong node. Leave unset to use
+# device_name instead.
+# device_path: "/dev/input/by-id/usb-Some_Keyboard_Name-event-kbd"
+
+# Fallback: substring match (case-insensitive) against the device name
+# reported by `python3 catlock.py --list-devices` or
+# `cat /proc/bus/input/devices`. Only used if device_path above is unset.
+# Fine for keyboards with a unique name; a common internal-laptop-keyboard
+# name on many (non-gaming) machines is:
 device_name: "AT Translated Set 2 keyboard"
 
 # Keys that must be held together to lock, and again to unlock. Names
@@ -15,7 +28,9 @@ unlock_keys: [KEY_LEFTCTRL, KEY_LEFTALT, KEY_L]
 
 # How long (seconds) the combo must be held before it triggers. Keep this
 # high enough that a cat's paw resting on the right keys for a moment
-# can't fluke it. 1.5-2.5s is a reasonable range.
+# can't fluke it. 1.5-2.5s is a reasonable range. Set to 0 to toggle the
+# instant all three keys are down, no hold required (more convenient, but
+# gives up the "paw can't fluke it" protection this exists for).
 hold_seconds: 1.5
 
 # Fire a desktop notification (via notify-send, if installed) on every
