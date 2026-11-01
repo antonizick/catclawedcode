@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="CloudyOmarchy.jpg" alt="CatLock logo" width="600">
+</p>
+
 # catclawedcode / CatLock
 
 A cat-proof keyboard lock for Linux. Hit a hotkey combo when you see the
